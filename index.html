@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>EV Dashboard</title>
+    <!-- Chart.js library for data visualisations -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            /* Colour palette inspired by iOS 26 */
+            --primary-color: #1a73e8;
+            --accent-blue: #0a84ff;
+            --accent-green: #32d74b;
+            --card-bg: rgba(255, 255, 255, 0.6);
+            --text-color: #0d0d0d;
+            --background: #f0f4f8;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --card-bg: rgba(0, 0, 0, 0.6);
+                --text-color: #ffffff;
+                --background: #0d0d0d;
+            }
+        }
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+            background: var(--background);
+            color: var(--text-color);
+            padding-bottom: 72px; /* space for bottom nav */
+        }
+        section {
+            padding: 20px;
+        }
+        .card {
+            background: var(--card-bg);
+            border-radius: 20px;
+            backdrop-filter: blur(20px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        h2 {
+            font-size: 22px;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }
+        .stat-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .stat {
+            flex: 1;
+            min-width: 45%;
+        }
+        nav {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            padding: 8px 0;
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            border-top: 1px solid rgba(0, 0, 0, 0.1);
+            z-index: 100;
+        }
+        .nav-item {
+            text-align: center;
+            flex: 1;
+            color: var(--text-color);
+            font-size: 12px;
+            cursor: pointer;
+            padding: 6px 0;
+        }
+        .nav-item.active {
+            color: var(--accent-blue);
+        }
+        .button {
+            background: var(--accent-blue);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            padding: 12px 16px;
+            font-size: 16px;
+            cursor: pointer;
+            margin: 10px 0;
+            width: 100%;
+            transition: transform 0.1s ease;
+        }
+        .button:active {
+            transform: scale(0.98);
+        }
+        input[type="number"], input[type="text"], select {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0 20px 0;
+            border: 1px solid rgba(0, 0, 0, 0.2);
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.7);
+            color: var(--text-color);
+            box-sizing: border-box;
+        }
+        /* Result styles within estimate cards */
+        .result {
+            margin-top: 10px;
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.7);
+            border-radius: 12px;
+            font-size: 16px;
+        }
+
+        /* Constrain battery chart size */
+        .chart-container {
+            width: 240px;
+            height: 240px;
+            margin: 0 auto;
+            position: relative;
+        }
+        .chart-container canvas {
+            width: 100% !important;
+            height: 100% !important;
+        }
+    </style>
+</head>
+<body>
+    <!-- Dashboard section -->
+    <section id="dashboardSection" class="section">
+        <div class="card">
+            <h1>EV Dashboard</h1>
+            <div class="chart-container">
+                <canvas id="batteryChart" width="240" height="240"></canvas>
+            </div>
+            <div class="stat-grid" id="dashboardStats">
+                <!-- Dashboard statistics inserted by JavaScript -->
+            </div>
+            <div id="quickActions">
+                <button class="button" onclick="switchSection('estimateSection')">Start Estimator</button>
+                <button class="button" onclick="switchSection('historySection')">View History</button>
+            </div>
+        </div>
+        <div class="card">
+            <h2>Analytics</h2>
+            <!-- SOC history chart -->
+            <canvas id="socHistoryChart"></canvas>
+            <!-- Cost history chart for charging sessions -->
+            <canvas id="costChart" style="margin-top:20px;"></canvas>
+        </div>
+    </section>
+    <!-- Estimate section -->
+    <section id="estimateSection" class="section" style="display:none;">
+        <div class="card">
+            <h1>Estimate</h1>
+            <!-- SOC estimator form -->
+            <h2>SOC Estimator</h2>
+            <input type="number" id="socRangeInput" placeholder="Current SOC (%)" min="0" max="100">
+            <input type="number" id="aecRangeInput" placeholder="Consumption (kWh/100 km)">
+            <button class="button" onclick="calculateRange()">Calculate Range</button>
+            <div id="rangeOutput" class="result"></div>
+            <!-- Charging estimator -->
+            <h2>Charging Estimator</h2>
+            <input type="number" id="socChargeInput" placeholder="Current SOC (%)" min="0" max="100">
+            <input type="number" id="chargeSpeedInput" placeholder="Charging speed (kW)">
+            <input type="number" id="chargeTimeInput" placeholder="Duration (hours)">
+            <!-- Network and charge type selection -->
+            <select id="networkSelect" style="margin-top:10px;">
+                <option value="">Select Network</option>
+                <option value="CDG Engie">CDG Engie</option>
+                <option value="Charge+">Charge+</option>
+                <option value="Shell">Shell</option>
+            </select>
+            <select id="chargeTypeSelect" style="margin-top:10px;">
+                <option value="AC">AC</option>
+                <option value="DC">DC</option>
+            </select>
+            <!-- Price per kWh (SGD) auto-filled by selection, editable for custom rates -->
+            <input type="number" id="priceInput" placeholder="Price (SGD/kWh)" step="0.01" min="0">
+            <button class="button" onclick="calculateCharge()">Estimate After Charge</button>
+            <div id="chargeOutput" class="result"></div>
+            <!-- Trip planner -->
+            <h2>Trip Planner</h2>
+            <input type="number" id="tripDistanceInput" placeholder="Distance (km)">
+            <input type="number" id="socTripInput" placeholder="Current SOC (%)">
+            <input type="number" id="aecTripInput" placeholder="Consumption (kWh/100 km)">
+            <button class="button" onclick="calculateTrip()">Estimate After Trip</button>
+            <div id="tripOutput" class="result"></div>
+        </div>
+    </section>
+    <!-- History section -->
+    <section id="historySection" class="section" style="display:none;">
+        <div class="card">
+            <h1>History</h1>
+            <div id="historyList">
+                <!-- History entries inserted by JavaScript -->
+            </div>
+        </div>
+    </section>
+    <!-- Settings section -->
+    <section id="settingsSection" class="section" style="display:none;">
+        <div class="card">
+            <h1>Settings</h1>
+            <h2>Profile</h2>
+            <input type="text" id="brandInput" placeholder="Brand (e.g., BYD)">
+            <input type="text" id="modelInput" placeholder="Model (e.g., SEAL 6EV)">
+            <input type="number" id="batteryInput" placeholder="Battery (kWh)" step="0.01" min="1">
+            <input type="number" id="wltpInput" placeholder="WLTP Range (km)" step="1" min="1">
+            <input type="number" id="aecInput" placeholder="Consumption (kWh/100 km)" step="0.1" min="1">
+            <button class="button" onclick="saveProfileFromSettings()">Save Profile</button>
+            <button class="button" onclick="resetProfile()">Reset Profile</button>
+            <h2>Favorites</h2>
+            <input type="text" id="favoriteInput" placeholder="Add favourite network">
+            <button class="button" onclick="addFavorite()">Add Favorite</button>
+            <div id="favoritesList"></div>
+        </div>
+    </section>
+    <!-- Bottom navigation bar -->
+    <nav>
+        <div class="nav-item active" data-section="dashboardSection" onclick="switchSection('dashboardSection')">
+            <div>🏠</div>
+            Dashboard
+        </div>
+        <div class="nav-item" data-section="estimateSection" onclick="switchSection('estimateSection')">
+            <div>🔧</div>
+            Estimate
+        </div>
+        <div class="nav-item" data-section="historySection" onclick="switchSection('historySection')">
+            <div>📈</div>
+            History
+        </div>
+        <div class="nav-item" data-section="settingsSection" onclick="switchSection('settingsSection')">
+            <div>⚙️</div>
+            Settings
+        </div>
+    </nav>
+    <script>
+        // Global chart variables
+        let batteryChart;
+        let socHistoryChart;
+        let costChart;
+
+        // Price presets for charging networks (per kWh)
+        const networkPrices = {
+            'CDG Engie': { AC: 0.65, DC: 0.72 },
+            'Charge+': { AC: 0.61, DC: 0.67 },
+            'Shell': { AC: 0.65, DC: 0.76 }
+        };
+
+        // Load profile from localStorage
+        function loadProfile() {
+            const profileStr = localStorage.getItem('evProfile');
+            if (!profileStr) return null;
+            try {
+                return JSON.parse(profileStr);
+            } catch (e) {
+                return null;
+            }
+        }
+
+        // Save profile to localStorage
+        function saveProfile(profile) {
+            localStorage.setItem('evProfile', JSON.stringify(profile));
+        }
+
+        // Update dashboard stats and battery chart
+        function updateDashboard() {
+            const stats = document.getElementById('dashboardStats');
+            stats.innerHTML = '';
+            const profile = loadProfile();
+            if (!profile) {
+                stats.innerHTML = '<p>No profile saved. Use Settings to add your vehicle.</p>';
+                updateBatteryChart(0);
+                return;
+            }
+            const { brand, model, battery, wltp, aec } = profile;
+            // Compute theoretical range at full charge
+            const fullRange = (battery * 100) / aec;
+            const statItems = [
+                { label: 'Vehicle', value: brand + ' ' + model },
+                { label: 'Battery', value: battery.toFixed(2) + ' kWh' },
+                { label: 'WLTP', value: wltp + ' km' },
+                { label: 'Est. Range', value: fullRange.toFixed(1) + ' km' }
+            ];
+            statItems.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'stat';
+                div.innerHTML = '<strong>' + item.label + '</strong><br>' + item.value;
+                stats.appendChild(div);
+            });
+            // Show current SOC from localStorage or default to 100
+            const currentSoc = parseFloat(localStorage.getItem('currentSoc') || '100');
+            updateBatteryChart(currentSoc);
+        }
+
+        // Initialize or update the battery doughnut chart
+        function updateBatteryChart(soc) {
+            const canvas = document.getElementById('batteryChart');
+            const ctx = canvas.getContext('2d');
+            // Create gradient for chart
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            gradient.addColorStop(0, getComputedStyle(document.documentElement).getPropertyValue('--accent-green'));
+            gradient.addColorStop(1, getComputedStyle(document.documentElement).getPropertyValue('--accent-blue'));
+            const data = {
+                labels: ['SOC', 'Remaining'],
+                datasets: [{
+                    data: [soc, 100 - soc],
+                    backgroundColor: [gradient, 'rgba(200,200,200,0.3)'],
+                    borderWidth: 0
+                }]
+            };
+            const options = {
+                cutout: '80%',
+                rotation: -90,
+                circumference: 360,
+                plugins: {
+                    tooltip: { enabled: false },
+                    legend: { display: false },
+                    centerText: {
+                        display: true,
+                        text: soc.toFixed(0) + '%'
+                    }
+                }
+            };
+            // Plugin to draw text in center
+            const centerTextPlugin = {
+                id: 'centerText',
+                beforeDraw: function(chart, args, opts) {
+                    if (!opts.display) return;
+                    const { ctx } = chart;
+                    const width = chart.width;
+                    const height = chart.height;
+                    ctx.save();
+                    ctx.font = 'bold 32px -apple-system';
+                    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--text-color');
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(opts.text, width / 2, height / 2);
+                }
+            };
+            if (batteryChart) {
+                batteryChart.data.datasets[0].data = [soc, 100 - soc];
+                batteryChart.options.plugins.centerText.text = soc.toFixed(0) + '%';
+                batteryChart.update();
+            } else {
+                batteryChart = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: data,
+                    options: options,
+                    plugins: [centerTextPlugin]
+                });
+            }
+        }
+
+        // Load history array from localStorage
+        function loadHistory() {
+            const histStr = localStorage.getItem('evHistory');
+            if (!histStr) return [];
+            try {
+                return JSON.parse(histStr);
+            } catch (e) {
+                return [];
+            }
+        }
+
+        // Save history entry and trim to last 50 records
+        function saveHistory(entry) {
+            const history = loadHistory();
+            history.unshift(entry);
+            localStorage.setItem('evHistory', JSON.stringify(history.slice(0, 50)));
+        }
+
+        // Render history list and update history chart
+        function renderHistory() {
+            const container = document.getElementById('historyList');
+            container.innerHTML = '';
+            const history = loadHistory();
+            if (history.length === 0) {
+                container.innerHTML = '<p>No history yet.</p>';
+                updateSocHistoryChart([]);
+                updateCostChart([]);
+                return;
+            }
+            history.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'card';
+                div.style.padding = '15px';
+                div.style.marginBottom = '15px';
+                div.innerHTML = `<strong>${item.type}</strong><br>${item.summary}<br><small>${new Date(item.time).toLocaleString()}</small>`;
+                container.appendChild(div);
+            });
+            updateSocHistoryChart(history);
+            updateCostChart(history);
+        }
+
+        // Update SOC history chart using Chart.js
+        function updateSocHistoryChart(history) {
+            const ctx = document.getElementById('socHistoryChart').getContext('2d');
+            const labels = history.map(h => new Date(h.time).toLocaleTimeString()).reverse();
+            const dataPoints = history.map(h => h.soc).reverse();
+            const data = {
+                labels: labels,
+                datasets: [{
+                    label: 'SOC (%)',
+                    data: dataPoints,
+                    fill: false,
+                    tension: 0.4,
+                    borderColor: getComputedStyle(document.documentElement).getPropertyValue('--accent-blue'),
+                    pointRadius: 3
+                }]
+            };
+            const options = {
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { ticks: { display: false } },
+                    y: { suggestedMin: 0, suggestedMax: 100 }
+                }
+            };
+            if (socHistoryChart) {
+                socHistoryChart.data = data;
+                socHistoryChart.update();
+            } else {
+                socHistoryChart = new Chart(ctx, {
+                    type: 'line',
+                    data: data,
+                    options: options
+                });
+            }
+        }
+
+        // Update cost history chart for charging sessions
+        function updateCostChart(history) {
+            const ctx = document.getElementById('costChart').getContext('2d');
+            const labels = [];
+            const dataPoints = [];
+            // Iterate history in reverse order to maintain chronological display
+            for (let i = history.length - 1; i >= 0; i--) {
+                const item = history[i];
+                if (item.type === 'Charge' && typeof item.cost === 'number') {
+                    labels.push(new Date(item.time).toLocaleTimeString());
+                    dataPoints.push(item.cost.toFixed(2));
+                }
+            }
+            const data = {
+                labels: labels,
+                datasets: [{
+                    label: 'Charging Cost (SGD)',
+                    data: dataPoints,
+                    fill: false,
+                    tension: 0.4,
+                    borderColor: getComputedStyle(document.documentElement).getPropertyValue('--accent-green'),
+                    pointRadius: 3
+                }]
+            };
+            const options = {
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { ticks: { display: false } },
+                    y: { suggestedMin: 0 }
+                }
+            };
+            if (costChart) {
+                costChart.data = data;
+                costChart.update();
+            } else {
+                costChart = new Chart(ctx, {
+                    type: 'line',
+                    data: data,
+                    options: options
+                });
+            }
+        }
+
+        // Favourites handling functions
+        function loadFavorites() {
+            const str = localStorage.getItem('evFavorites');
+            if (!str) return [];
+            try {
+                return JSON.parse(str);
+            } catch (e) {
+                return [];
+            }
+        }
+        function saveFavorites(list) {
+            localStorage.setItem('evFavorites', JSON.stringify(list));
+        }
+        function addFavorite() {
+            const input = document.getElementById('favoriteInput');
+            const name = input.value.trim();
+            if (!name) return;
+            const list = loadFavorites();
+            if (!list.includes(name)) {
+                list.push(name);
+                saveFavorites(list);
+                renderFavorites();
+            }
+            input.value = '';
+        }
+        function removeFavorite(index) {
+            const list = loadFavorites();
+            list.splice(index, 1);
+            saveFavorites(list);
+            renderFavorites();
+        }
+        function renderFavorites() {
+            const container = document.getElementById('favoritesList');
+            if (!container) return;
+            const list = loadFavorites();
+            container.innerHTML = '';
+            if (list.length === 0) {
+                container.innerHTML = '<p>No favourites yet.</p>';
+                return;
+            }
+            list.forEach((fav, index) => {
+                const div = document.createElement('div');
+                div.className = 'stat';
+                div.style.display = 'flex';
+                div.style.justifyContent = 'space-between';
+                div.style.alignItems = 'center';
+                div.style.marginBottom = '5px';
+                div.innerHTML = `<span>${fav}</span>`;
+                const btn = document.createElement('button');
+                btn.textContent = '✕';
+                btn.style.background = 'transparent';
+                btn.style.border = 'none';
+                btn.style.color = getComputedStyle(document.documentElement).getPropertyValue('--accent-blue');
+                btn.style.cursor = 'pointer';
+                btn.onclick = function() { removeFavorite(index); };
+                div.appendChild(btn);
+                container.appendChild(div);
+            });
+        }
+
+        // Estimator functions
+        function calculateRange() {
+            const profile = loadProfile();
+            if (!profile) {
+                alert('Please save your profile in Settings.');
+                return;
+            }
+            const soc = parseFloat(document.getElementById('socRangeInput').value);
+            const aec = parseFloat(document.getElementById('aecRangeInput').value);
+            if (isNaN(soc) || isNaN(aec)) {
+                alert('Please enter valid values for SOC and consumption.');
+                return;
+            }
+            const range = (profile.battery * (soc / 100) * 100) / aec;
+            document.getElementById('rangeOutput').textContent = 'Estimated range: ' + range.toFixed(1) + ' km';
+            localStorage.setItem('currentSoc', soc);
+            updateBatteryChart(soc);
+            saveHistory({ type: 'Range', soc: soc, summary: `Estimated ${range.toFixed(1)} km at ${soc}%`, time: Date.now() });
+            renderHistory();
+        }
+
+        function calculateCharge() {
+            const profile = loadProfile();
+            if (!profile) {
+                alert('Please save your profile in Settings.');
+                return;
+            }
+            const soc = parseFloat(document.getElementById('socChargeInput').value);
+            const speed = parseFloat(document.getElementById('chargeSpeedInput').value);
+            const hours = parseFloat(document.getElementById('chargeTimeInput').value);
+            if ([soc, speed, hours].some(v => isNaN(v))) {
+                alert('Please enter valid values for SOC, speed and duration.');
+                return;
+            }
+            // Calculate energy added in kWh
+            const energyAdded = speed * hours;
+            // Determine price per kWh from input or preset
+            const priceInput = document.getElementById('priceInput');
+            const networkSelect = document.getElementById('networkSelect');
+            const chargeTypeSelect = document.getElementById('chargeTypeSelect');
+            let price = parseFloat(priceInput.value);
+            const network = networkSelect ? networkSelect.value : '';
+            const type = chargeTypeSelect ? chargeTypeSelect.value : 'AC';
+            if (isNaN(price)) {
+                if (networkPrices[network] && networkPrices[network][type]) {
+                    price = networkPrices[network][type];
+                } else {
+                    price = 0;
+                }
+            }
+            const cost = energyAdded * price;
+            let newSoc = soc + (energyAdded / profile.battery) * 100;
+            if (newSoc > 100) newSoc = 100;
+            // Display updated SOC and cost
+            document.getElementById('chargeOutput').textContent = 'After charge: ' + newSoc.toFixed(1) + '% | Cost: $' + cost.toFixed(2);
+            localStorage.setItem('currentSoc', newSoc);
+            updateBatteryChart(newSoc);
+            saveHistory({
+                type: 'Charge',
+                soc: newSoc,
+                summary: `Charged to ${newSoc.toFixed(1)}% from ${soc}%. Cost $${cost.toFixed(2)}`,
+                time: Date.now(),
+                energy: energyAdded,
+                cost: cost
+            });
+            renderHistory();
+        }
+
+        function calculateTrip() {
+            const profile = loadProfile();
+            if (!profile) {
+                alert('Please save your profile in Settings.');
+                return;
+            }
+            const distance = parseFloat(document.getElementById('tripDistanceInput').value);
+            const soc = parseFloat(document.getElementById('socTripInput').value);
+            const aec = parseFloat(document.getElementById('aecTripInput').value);
+            if ([distance, soc, aec].some(v => isNaN(v))) {
+                alert('Please enter valid values for distance, SOC and consumption.');
+                return;
+            }
+            const consumptionPerKm = aec / 100;
+            const energyConsumed = distance * consumptionPerKm;
+            const energyAvailable = profile.battery * (soc / 100);
+            let energyRemaining = energyAvailable - energyConsumed;
+            let newSoc = (energyRemaining / profile.battery) * 100;
+            if (newSoc < 0) newSoc = 0;
+            const rangeRemaining = energyRemaining / consumptionPerKm;
+            document.getElementById('tripOutput').textContent = 'After trip: ' + newSoc.toFixed(1) + '% (' + (rangeRemaining > 0 ? rangeRemaining.toFixed(1) + ' km left' : 'depleted') + ')';
+            localStorage.setItem('currentSoc', newSoc);
+            updateBatteryChart(newSoc);
+            saveHistory({
+                type: 'Trip',
+                soc: newSoc,
+                summary: `Trip ${distance} km, SOC ${newSoc.toFixed(1)}%, energy used ${energyConsumed.toFixed(2)} kWh`,
+                time: Date.now(),
+                energy: energyConsumed
+            });
+            renderHistory();
+        }
+
+        // Navigation function to switch between sections
+        function switchSection(id) {
+            const sections = ['dashboardSection', 'estimateSection', 'historySection', 'settingsSection'];
+            sections.forEach(sec => {
+                document.getElementById(sec).style.display = (sec === id) ? 'block' : 'none';
+            });
+            document.querySelectorAll('.nav-item').forEach(item => {
+                if (item.getAttribute('data-section') === id) {
+                    item.classList.add('active');
+                } else {
+                    item.classList.remove('active');
+                }
+            });
+            if (id === 'dashboardSection') {
+                updateDashboard();
+            } else if (id === 'historySection') {
+                renderHistory();
+            }
+        }
+
+        // Save profile from settings form
+        function saveProfileFromSettings() {
+            const brand = document.getElementById('brandInput').value.trim();
+            const model = document.getElementById('modelInput').value.trim();
+            const battery = parseFloat(document.getElementById('batteryInput').value);
+            const wltp = parseFloat(document.getElementById('wltpInput').value);
+            const aec = parseFloat(document.getElementById('aecInput').value);
+            if (!brand || !model || [battery, wltp, aec].some(v => isNaN(v))) {
+                alert('Please fill in all profile fields.');
+                return;
+            }
+            const profile = { brand, model, battery, wltp, aec };
+            saveProfile(profile);
+            updateDashboard();
+            alert('Profile saved successfully!');
+        }
+
+        // Reset profile and history
+        function resetProfile() {
+            if (confirm('Are you sure you want to reset your profile and history?')) {
+                localStorage.removeItem('evProfile');
+                localStorage.removeItem('currentSoc');
+                localStorage.removeItem('evHistory');
+                updateDashboard();
+                renderHistory();
+            }
+        }
+
+        // Initialise on page load
+        window.addEventListener('DOMContentLoaded', function() {
+            updateDashboard();
+            renderHistory();
+            // Setup network price auto-fill on page load
+            const networkSelect = document.getElementById('networkSelect');
+            const chargeTypeSelect = document.getElementById('chargeTypeSelect');
+            const priceInput = document.getElementById('priceInput');
+            function updatePriceField() {
+                const network = networkSelect ? networkSelect.value : '';
+                const type = chargeTypeSelect ? chargeTypeSelect.value : 'AC';
+                if (networkPrices[network] && networkPrices[network][type]) {
+                    priceInput.value = networkPrices[network][type];
+                    priceInput.disabled = true;
+                } else {
+                    priceInput.value = '';
+                    priceInput.disabled = false;
+                }
+            }
+            if (networkSelect && chargeTypeSelect) {
+                networkSelect.addEventListener('change', updatePriceField);
+                chargeTypeSelect.addEventListener('change', updatePriceField);
+            }
+            // Render favourites list
+            renderFavorites();
+        });
+    </script>
+</body>
+</html>
