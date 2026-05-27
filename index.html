@@ -8,21 +8,17 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
-            /* Colour palette inspired by iOS 26 */
+            /* Colour palette inspired by iOS 26 – dark mode by default */
             --primary-color: #1a73e8;
             --accent-blue: #0a84ff;
             --accent-green: #32d74b;
-            --card-bg: rgba(255, 255, 255, 0.6);
-            --text-color: #0d0d0d;
-            --background: #f0f4f8;
+            /* Dark mode defaults */
+            --card-bg: rgba(0, 0, 0, 0.6);
+            --text-color: #ffffff;
+            --background: #0d0d0d;
+            --input-bg: rgba(255, 255, 255, 0.15);
         }
-        @media (prefers-color-scheme: dark) {
-            :root {
-                --card-bg: rgba(0, 0, 0, 0.6);
-                --text-color: #ffffff;
-                --background: #0d0d0d;
-            }
-        }
+        /* Always stay in dark mode regardless of system preference */
         body {
             margin: 0;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
@@ -103,9 +99,9 @@
             width: 100%;
             padding: 12px;
             margin: 10px 0 20px 0;
-            border: 1px solid rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.2);
             border-radius: 12px;
-            background: rgba(255, 255, 255, 0.7);
+            background: var(--input-bg);
             color: var(--text-color);
             box-sizing: border-box;
         }
@@ -113,7 +109,7 @@
         .result {
             margin-top: 10px;
             padding: 10px;
-            background: rgba(255, 255, 255, 0.7);
+            background: rgba(255, 255, 255, 0.1);
             border-radius: 12px;
             font-size: 16px;
         }
@@ -128,6 +124,36 @@
         .chart-container canvas {
             width: 100% !important;
             height: 100% !important;
+        }
+
+        /* Responsive adjustments for larger screens */
+        @media (min-width: 768px) {
+            body {
+                padding-bottom: 80px;
+            }
+            section {
+                padding: 40px;
+            }
+            .card {
+                margin: 20px auto;
+                max-width: 600px;
+            }
+            .chart-container {
+                width: 300px;
+                height: 300px;
+            }
+            nav {
+                font-size: 14px;
+            }
+        }
+        @media (min-width: 1024px) {
+            .card {
+                max-width: 800px;
+            }
+            .chart-container {
+                width: 360px;
+                height: 360px;
+            }
         }
     </style>
 </head>
@@ -165,11 +191,20 @@
             <input type="number" id="aecRangeInput" placeholder="Consumption (kWh/100 km)">
             <button class="button" onclick="calculateRange()">Calculate Range</button>
             <div id="rangeOutput" class="result"></div>
-            <!-- Charging estimator -->
+            <!-- Charging estimator with two modes -->
             <h2>Charging Estimator</h2>
             <input type="number" id="socChargeInput" placeholder="Current SOC (%)" min="0" max="100">
             <input type="number" id="chargeSpeedInput" placeholder="Charging speed (kW)">
-            <input type="number" id="chargeTimeInput" placeholder="Duration (hours)">
+            <div id="chargeModeContainer" style="margin-bottom:10px;">
+                <label style="margin-right:10px;"><input type="radio" name="chargeMode" value="duration" checked onchange="toggleChargeMode()"> By Duration</label>
+                <label><input type="radio" name="chargeMode" value="target" onchange="toggleChargeMode()"> By Target SOC</label>
+            </div>
+            <div id="durationInputGroup">
+                <input type="number" id="chargeDurationInput" placeholder="Duration (hours)" step="0.1" min="0">
+            </div>
+            <div id="targetInputGroup" style="display:none;">
+                <input type="number" id="targetSocInput" placeholder="Target SOC (%)" min="0" max="100">
+            </div>
             <!-- Network and charge type selection -->
             <select id="networkSelect" style="margin-top:10px;">
                 <option value="">Select Network</option>
@@ -183,10 +218,14 @@
             </select>
             <!-- Price per kWh (SGD) auto-filled by selection, editable for custom rates -->
             <input type="number" id="priceInput" placeholder="Price (SGD/kWh)" step="0.01" min="0">
-            <button class="button" onclick="calculateCharge()">Estimate After Charge</button>
+            <button class="button" onclick="handleCharge()">Estimate</button>
             <div id="chargeOutput" class="result"></div>
-            <!-- Trip planner -->
-            <h2>Trip Planner</h2>
+        </div>
+    </section>
+    <!-- Trip section -->
+    <section id="tripSection" class="section" style="display:none;">
+        <div class="card">
+            <h1>Trip Planner</h1>
             <input type="number" id="tripDistanceInput" placeholder="Distance (km)">
             <input type="number" id="socTripInput" placeholder="Current SOC (%)">
             <input type="number" id="aecTripInput" placeholder="Consumption (kWh/100 km)">
@@ -230,6 +269,10 @@
         <div class="nav-item" data-section="estimateSection" onclick="switchSection('estimateSection')">
             <div>🔧</div>
             Estimate
+        </div>
+        <div class="nav-item" data-section="tripSection" onclick="switchSection('tripSection')">
+            <div>🚗</div>
+            Trip
         </div>
         <div class="nav-item" data-section="historySection" onclick="switchSection('historySection')">
             <div>📈</div>
@@ -557,8 +600,32 @@
             saveHistory({ type: 'Range', soc: soc, summary: `Estimated ${range.toFixed(1)} km at ${soc}%`, time: Date.now() });
             renderHistory();
         }
+        // Charge mode: by duration or by target SOC
+        function toggleChargeMode() {
+            const mode = document.querySelector('input[name="chargeMode"]:checked').value;
+            const durationGroup = document.getElementById('durationInputGroup');
+            const targetGroup = document.getElementById('targetInputGroup');
+            if (mode === 'duration') {
+                durationGroup.style.display = 'block';
+                targetGroup.style.display = 'none';
+            } else {
+                durationGroup.style.display = 'none';
+                targetGroup.style.display = 'block';
+            }
+        }
 
-        function calculateCharge() {
+        // Unified handler for charging estimator
+        function handleCharge() {
+            const mode = document.querySelector('input[name="chargeMode"]:checked').value;
+            if (mode === 'duration') {
+                calculateChargeDuration();
+            } else {
+                calculateChargeTarget();
+            }
+        }
+
+        // Calculate end state SOC based on duration input
+        function calculateChargeDuration() {
             const profile = loadProfile();
             if (!profile) {
                 alert('Please save your profile in Settings.');
@@ -566,7 +633,7 @@
             }
             const soc = parseFloat(document.getElementById('socChargeInput').value);
             const speed = parseFloat(document.getElementById('chargeSpeedInput').value);
-            const hours = parseFloat(document.getElementById('chargeTimeInput').value);
+            const hours = parseFloat(document.getElementById('chargeDurationInput').value);
             if ([soc, speed, hours].some(v => isNaN(v))) {
                 alert('Please enter valid values for SOC, speed and duration.');
                 return;
@@ -575,11 +642,9 @@
             const energyAdded = speed * hours;
             // Determine price per kWh from input or preset
             const priceInput = document.getElementById('priceInput');
-            const networkSelect = document.getElementById('networkSelect');
-            const chargeTypeSelect = document.getElementById('chargeTypeSelect');
+            const network = document.getElementById('networkSelect') ? document.getElementById('networkSelect').value : '';
+            const type = document.getElementById('chargeTypeSelect') ? document.getElementById('chargeTypeSelect').value : 'AC';
             let price = parseFloat(priceInput.value);
-            const network = networkSelect ? networkSelect.value : '';
-            const type = chargeTypeSelect ? chargeTypeSelect.value : 'AC';
             if (isNaN(price)) {
                 if (networkPrices[network] && networkPrices[network][type]) {
                     price = networkPrices[network][type];
@@ -600,6 +665,55 @@
                 summary: `Charged to ${newSoc.toFixed(1)}% from ${soc}%. Cost $${cost.toFixed(2)}`,
                 time: Date.now(),
                 energy: energyAdded,
+                cost: cost
+            });
+            renderHistory();
+        }
+
+        // Calculate time required to reach target SOC
+        function calculateChargeTarget() {
+            const profile = loadProfile();
+            if (!profile) {
+                alert('Please save your profile in Settings.');
+                return;
+            }
+            const soc = parseFloat(document.getElementById('socChargeInput').value);
+            const speed = parseFloat(document.getElementById('chargeSpeedInput').value);
+            const targetSoc = parseFloat(document.getElementById('targetSocInput').value);
+            if ([soc, speed, targetSoc].some(v => isNaN(v))) {
+                alert('Please enter valid values for SOC, speed and target SOC.');
+                return;
+            }
+            if (targetSoc <= soc) {
+                document.getElementById('chargeOutput').textContent = 'Target SOC must be greater than current SOC.';
+                return;
+            }
+            const energyNeeded = profile.battery * ((targetSoc - soc) / 100);
+            const hoursRequired = energyNeeded / speed;
+            const priceInput = document.getElementById('priceInput');
+            const network = document.getElementById('networkSelect') ? document.getElementById('networkSelect').value : '';
+            const type = document.getElementById('chargeTypeSelect') ? document.getElementById('chargeTypeSelect').value : 'AC';
+            let price = parseFloat(priceInput.value);
+            if (isNaN(price)) {
+                if (networkPrices[network] && networkPrices[network][type]) {
+                    price = networkPrices[network][type];
+                } else {
+                    price = 0;
+                }
+            }
+            const cost = energyNeeded * price;
+            let newSoc = targetSoc;
+            if (newSoc > 100) newSoc = 100;
+            // Display time required and cost
+            document.getElementById('chargeOutput').textContent = 'Time required: ' + hoursRequired.toFixed(2) + ' hrs | Cost: $' + cost.toFixed(2);
+            localStorage.setItem('currentSoc', newSoc);
+            updateBatteryChart(newSoc);
+            saveHistory({
+                type: 'Charge',
+                soc: newSoc,
+                summary: `Charged to ${newSoc.toFixed(1)}% from ${soc}%. Time ${hoursRequired.toFixed(2)} hrs, cost $${cost.toFixed(2)}`,
+                time: Date.now(),
+                energy: energyNeeded,
                 cost: cost
             });
             renderHistory();
@@ -640,7 +754,7 @@
 
         // Navigation function to switch between sections
         function switchSection(id) {
-            const sections = ['dashboardSection', 'estimateSection', 'historySection', 'settingsSection'];
+            const sections = ['dashboardSection', 'estimateSection', 'tripSection', 'historySection', 'settingsSection'];
             sections.forEach(sec => {
                 document.getElementById(sec).style.display = (sec === id) ? 'block' : 'none';
             });
@@ -711,6 +825,11 @@
             }
             // Render favourites list
             renderFavorites();
+
+            // Initialise charging estimator mode visibility
+            if (typeof toggleChargeMode === 'function') {
+                toggleChargeMode();
+            }
         });
     </script>
 </body>
